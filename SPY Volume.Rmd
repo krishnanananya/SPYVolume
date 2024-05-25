@@ -1,0 +1,31 @@
+---
+title: "ARIMA"
+output: pdf_document
+date: "2024-05-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load and Process Data
+```{r}
+df <- read.csv('SPY.csv')
+vol <- df[c('Date', 'Volume')]
+vol$Date <- as.Date(vol$Date)
+```
+
+
+## EDA
+
+
+```{r}
+
+plot(vol)
+
+```
+
+
+
+
