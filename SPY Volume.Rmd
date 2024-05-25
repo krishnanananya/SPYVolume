@@ -1,5 +1,5 @@
 ---
-title: "ARIMA"
+title: "SPY Volume"
 output: pdf_document
 date: "2024-05-25"
 ---
@@ -18,13 +18,26 @@ vol$Date <- as.Date(vol$Date)
 
 
 ## EDA
+We start by examining the time series across the full trading history of SPY as well as over the last decade. We choose to focus our analysis on the last decade. There are several reasons we choose to do this. Firstly, while the S&P 500 was founded in March 1957, SPY was only launched in 1993 and it took over a decade for the ETF to gain popularity among financial institutions as a reliable proxy for the broader index. Over the last decade, aside from S&P futures, SPY has been consistently regarded as the primary instrument to gain index exposure among large financial institutions. Secondly, during financial crises (e.g. 2008), market volatility tends to spike significantly. This usually leads market participants to shift into more conservative strategies, impacting market dynamics in ways that are related to the specifics of the crisis. In periods like these, algorithmic trading usually becomes more manual in nature as traders re-evaluate the evolution of day-to-day market conditions, changing the nature and quantity of trades placed on any given day. Given our focus on predicting trading volume, which is often an input into trading algorithms, we choose not to model periods with exceptional market volatility.
 
 
 ```{r}
+# Full history
+plot(vol, type = 'l', main = 'SPY Daily Trading Volume - Full History')
+grid()
 
-plot(vol)
 
+
+# Last decade
+post2013 <- vol[vol$Date > "2013-12-31",]
+plot(post2013, type = 'l', main = 'SPY Daily Trading Volume Over the Last Decade')
+grid()
+
+# ACF/PACF plots
+acf(post2013$Volume)
+pacf(post2013$Volume)
 ```
+
 
 
 
