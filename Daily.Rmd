@@ -8,6 +8,13 @@ date: "2024-05-25"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Load Libraries
+```{r}
+
+
+
+```
+
 
 ## Load and Process Data
 ```{r}
@@ -18,7 +25,7 @@ fullhist$Date <- as.Date(fullhist$Date)
 
 
 ## EDA
-ACF/PACF plots seem to indicate both MA and AR processes.
+ACF/PACF plots seem to indicate both MA and AR components.
 ```{r}
 # Full history
 plot(fullhist, type = 'l', main = 'SPY Daily Trading Volume - Full History')
@@ -36,10 +43,7 @@ pacf(post2013$Volume)
 
 
 ## Model Fitting
-
-
 ### a)
-
 ```{r}
 
 
