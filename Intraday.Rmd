@@ -1,0 +1,72 @@
+---
+title: "Intraday"
+output: pdf_document
+date: "2024-05-27"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Libraries
+```{r}
+library(tidyverse)
+
+
+```
+
+
+## Load and Process Data
+```{r}
+df <- read.csv('SPY_intraday.csv')
+vol <- df[c('timestamp', 'volume')]
+vol$timestamp <- as.POSIXct(vol$timestamp, format = "%Y-%m-%d %H:%M:%S")
+
+# Define separate date and time columns
+vol$Date <- as.Date(vol$timestamp)
+vol$Time <- format(vol$timestamp,"%H:%M:%S")
+
+# Rename columns
+names(vol)[names(vol) == 'volume'] <- 'Volume'
+names(vol)[names(vol) == 'timestamp'] <- 'Timestamp'
+
+```
+
+
+
+## EDA
+Strong seasonality component.
+Volume spikes in first couple hours of trading, then dies down, then again spikes at the close.
+```{r}
+# Plot Data
+start_date = "2024-01-01" # SUBSETS ONLY FOR PLOT!!!
+subsetvol = vol[vol$Timestamp >= start_date,]
+plot(subsetvol$Timestamp, subsetvol$Volume, type = 'l', main = 'SPY Intraday Trading Volume 2024')
+
+
+# ACF/PACF plots
+acf(vol$Volume)
+pacf(vol$Volume)
+
+
+# Average hourly volume
+avghourlyvolume <- vol %>%
+                      group_by(Time) %>%
+                      summarise(avgvol = mean(Volume))
+
+avghourlyvolume$Time <- as.POSIXct(avghourlyvolume$Time, format = "%H:%M:%S")
+
+plot(avghourlyvolume$Time, avghourlyvolume$avgvol, type = 'l',
+     xlim=as.POSIXct(c("2024-05-26 12:00:00","2024-05-26 21:00:00")),
+     main = "Average Hourly Trading Volume")
+
+```
+
+
+
+## Model Fitting
+### a)
+```{r}
+
+
+```
