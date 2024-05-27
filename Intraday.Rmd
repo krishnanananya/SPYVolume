@@ -18,6 +18,7 @@ library(tseries)
 
 
 ## Load and Process Data
+Subset to full weeks in 2024. Remove data for non-trading hours only to avoid complexities with dealing with seasonality across the 5 trading days in a week but no volumes over weekends.
 ```{r}
 df <- read.csv('SPY_intraday.csv')
 vol <- df[c('timestamp', 'volume')]
@@ -30,7 +31,7 @@ names(vol)[names(vol) == 'timestamp'] <- 'Timestamp'
 
 # Subset Data
 start_date = "2024-01-08"
-end_date = "2024-05-17"
+end_date = "2024-05-16"
 vol = vol[vol$Timestamp >= start_date,]
 vol = vol[vol$Timestamp <= end_date,]
 
@@ -55,6 +56,23 @@ vol$Time <- format(vol$Timestamp,"%H:%M:%S")
 
 # Remove 3/10/24 due to complications with attributing time due to daylight savings
 vol = vol[vol$Date != "2024-03-10",]
+
+
+# Extract Trading Hours data only
+trading_hours <- vol %>%
+  filter(wday(Timestamp, week_start = 1) %in% 1:5 & 
+         ((hour(Timestamp) == 9) | 
+          (hour(Timestamp) > 9 & hour(Timestamp) < 16) | 
+          (hour(Timestamp) == 16)))
+
+# Remove Holidays
+trading_hours = trading_hours[trading_hours$Date != '2024-01-15',]
+trading_hours = trading_hours[trading_hours$Date != '2024-02-19',]
+trading_hours = trading_hours[trading_hours$Date != '2024-03-29',]
+trading_hours = trading_hours[trading_hours$Date != '2024-05-16',]
+
+
+plot(trading_hours$Volume, type = 'l')
 ```
 
 
@@ -64,10 +82,8 @@ Volume spikes in first couple hours of trading, then dies down, then again spike
 
 Strong seasonality component.
 
-Tested removing weekends/holidays, but resulted in slightly odd time series (large jump from fri market close to mon open) which also doesn't reflect trading volume accurately (tend to see more volume after weekend/holidays due to more info not being priced into markets).
-
 ```{r}
-# Plot Data
+# Plot Data (Incl Weekends/Non-trading Hours)
 start_date = "2024-01-01" # SUBSETS ONLY FOR PLOT!!!
 subsetvol = vol[vol$Timestamp >= start_date,]
 plot(subsetvol$Timestamp, subsetvol$Volume, type = 'l', main = 'SPY Intraday Trading Volume 2024')
@@ -101,12 +117,12 @@ abline(v=as.POSIXct(c("2024-05-27 9:30:00", "2024-05-27 16:00:00")), col="blue")
 
 
 # ACF/PACF plots
-acf(vol$Volume)
-pacf(vol$Volume)
+acf(trading_hours$Volume)
+pacf(trading_hours$Volume)
 
 
-# Convert to time series
-ts_data <- ts(vol$Volume, frequency = 168)
+# Convert to time series - frequency is weekly because of issues that arise due to no trading on weekends if freq = 24
+ts_data <- ts(trading_hours$Volume, frequency = 8)
 
 # Decompose Time Series
 decomp <- decompose(ts_data)
@@ -122,9 +138,13 @@ plot(decomp)
 # Fit best ARIMA model
 fit <- auto.arima(ts_data, seasonal = TRUE)
 summary(fit)
+
+residuals <- fit$residuals
+plot(residuals)
 checkresiduals(fit)
 
-forecast_values <- forecast(fit, h=168)
+# Forecast
+forecast_values <- forecast(fit, h=16)
 plot(forecast_values)
 
 ```
