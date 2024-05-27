@@ -1,0 +1,51 @@
+---
+title: "SPY Volume"
+output: pdf_document
+date: "2024-05-25"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load and Process Data
+```{r}
+df <- read.csv('SPY.csv')
+fullhist <- df[c('Date', 'Volume')]
+fullhist$Date <- as.Date(fullhist$Date)
+```
+
+
+## EDA
+ACF/PACF plots seem to indicate both MA and AR processes.
+```{r}
+# Full history
+plot(fullhist, type = 'l', main = 'SPY Daily Trading Volume - Full History')
+grid()
+
+# Last decade
+post2013 <- fullhist[fullhist$Date > "2013-12-31",]
+plot(post2013, type = 'l', main = 'SPY Daily Trading Volume Over the Last Decade')
+grid()
+
+# ACF/PACF plots
+acf(post2013$Volume)
+pacf(post2013$Volume)
+```
+
+
+## Model Fitting
+
+
+### a)
+
+```{r}
+
+
+```
+
+
+
+
+
