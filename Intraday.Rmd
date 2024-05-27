@@ -18,7 +18,7 @@ library(tseries)
 
 
 ## Load and Process Data
-Subset to full weeks in 2024. Remove data for non-trading hours only to avoid complexities with dealing with seasonality across the 5 trading days in a week but no volumes over weekends.
+Subset to full weeks in 2024. Remove data for non-trading hours to avoid complexities with dealing with seasonality across the 5 trading days in a week but no volumes over weekends.
 ```{r}
 df <- read.csv('SPY_intraday.csv')
 vol <- df[c('timestamp', 'volume')]
@@ -80,8 +80,7 @@ plot(trading_hours$Volume, type = 'l')
 ## EDA
 Volume spikes in first couple hours of trading, then dies down, then again spikes at the close.
 
-Strong seasonality component.
-
+Strong seasonality component every 8 timesteps (daily).
 ```{r}
 # Plot Data (Incl Weekends/Non-trading Hours)
 start_date = "2024-01-01" # SUBSETS ONLY FOR PLOT!!!
@@ -134,7 +133,12 @@ plot(decomp)
 
 ## Model Fitting
 ### a) ARIMA()
+Strong seasonality component that repeats every 8 hours (daily)
 ```{r}
+# Diagnosis Plots
+acf(trading_hours$Volume)
+pacf(trading_hours$Volume)
+
 # Fit best ARIMA model
 fit <- auto.arima(ts_data, seasonal = TRUE)
 summary(fit)
