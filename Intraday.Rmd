@@ -11,8 +11,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ## Load Libraries
 ```{r}
 library(tidyverse)
-
-
+library(lubridate)
+library(forecast)
+library(tseries)
 ```
 
 
@@ -21,22 +22,50 @@ library(tidyverse)
 df <- read.csv('SPY_intraday.csv')
 vol <- df[c('timestamp', 'volume')]
 vol$timestamp <- as.POSIXct(vol$timestamp, format = "%Y-%m-%d %H:%M:%S")
-
-# Define separate date and time columns
-vol$Date <- as.Date(vol$timestamp)
-vol$Time <- format(vol$timestamp,"%H:%M:%S")
+vol$timestamp <- vol$timestamp - hours(3)
 
 # Rename columns
 names(vol)[names(vol) == 'volume'] <- 'Volume'
 names(vol)[names(vol) == 'timestamp'] <- 'Timestamp'
 
+# Subset Data
+start_date = "2024-01-08"
+end_date = "2024-05-17"
+vol = vol[vol$Timestamp >= start_date,]
+vol = vol[vol$Timestamp <= end_date,]
+
+
+# Define 24 hours per day and volume = 0 for each time with no trading
+start_date <- as.Date(min(vol$Timestamp))
+end_date <- as.Date(max(vol$Timestamp))
+all_hours <- seq.POSIXt(as.POSIXct(paste(start_date, "00:00:00")), 
+                        as.POSIXct(paste(end_date, "23:00:00")), 
+                        by = "hour")
+full_data <- data.frame(Timestamp = all_hours) %>%
+  left_join(vol, by = "Timestamp") %>%
+  replace_na(list(Volume = 0))
+
+vol <- full_data
+
+
+# Define separate date and time columns
+vol$Date <- as.Date(vol$Timestamp, origin = "1904-01-01", tz = "PST8PDT")
+vol$Time <- format(vol$Timestamp,"%H:%M:%S")
+
+
+# Remove 3/10/24 due to complications with attributing time due to daylight savings
+vol = vol[vol$Date != "2024-03-10",]
 ```
 
 
 
 ## EDA
-Strong seasonality component.
 Volume spikes in first couple hours of trading, then dies down, then again spikes at the close.
+
+Strong seasonality component.
+
+Tested removing weekends/holidays, but resulted in slightly odd time series (large jump from fri market close to mon open) which also doesn't reflect trading volume accurately (tend to see more volume after weekend/holidays due to more info not being priced into markets).
+
 ```{r}
 # Plot Data
 start_date = "2024-01-01" # SUBSETS ONLY FOR PLOT!!!
@@ -44,29 +73,58 @@ subsetvol = vol[vol$Timestamp >= start_date,]
 plot(subsetvol$Timestamp, subsetvol$Volume, type = 'l', main = 'SPY Intraday Trading Volume 2024')
 
 
+
+
+# Average hourly trading volume
+avghourlyvolume <- vol %>%
+                      group_by(Time) %>%
+                      summarise(avgvol = mean(Volume),
+                                sdvol = sd(Volume))
+
+avghourlyvolume$Time <- as.POSIXct(avghourlyvolume$Time, format = "%H:%M:%S")
+
+
+U = avghourlyvolume$avgvol + avghourlyvolume$sdvol
+L = avghourlyvolume$avgvol - avghourlyvolume$sdvol
+
+plot(avghourlyvolume$Time, avghourlyvolume$avgvol, type = 'l',
+     xlim=as.POSIXct(c("2024-05-27 9:00:00","2024-05-27 18:00:00")),
+     ylim=c(0, 23000000),
+     main = "Average Hourly Trading Volume",
+     xlab = "Time of Day",
+     ylab = "Volume")
+points(avghourlyvolume$Time, U, col = "red", type = "l")
+points(avghourlyvolume$Time, L, col = "red", type = "l")
+abline(v=as.POSIXct(c("2024-05-27 9:30:00", "2024-05-27 16:00:00")), col="blue")
+
+
+
+
 # ACF/PACF plots
 acf(vol$Volume)
 pacf(vol$Volume)
 
 
-# Average hourly volume
-avghourlyvolume <- vol %>%
-                      group_by(Time) %>%
-                      summarise(avgvol = mean(Volume))
+# Convert to time series
+ts_data <- ts(vol$Volume, frequency = 168)
 
-avghourlyvolume$Time <- as.POSIXct(avghourlyvolume$Time, format = "%H:%M:%S")
-
-plot(avghourlyvolume$Time, avghourlyvolume$avgvol, type = 'l',
-     xlim=as.POSIXct(c("2024-05-26 12:00:00","2024-05-26 21:00:00")),
-     main = "Average Hourly Trading Volume")
+# Decompose Time Series
+decomp <- decompose(ts_data)
+plot(decomp)
 
 ```
 
 
 
 ## Model Fitting
-### a)
+### a) ARIMA()
 ```{r}
+# Fit best ARIMA model
+fit <- auto.arima(ts_data, seasonal = TRUE)
+summary(fit)
+checkresiduals(fit)
 
+forecast_values <- forecast(fit, h=168)
+plot(forecast_values)
 
 ```
