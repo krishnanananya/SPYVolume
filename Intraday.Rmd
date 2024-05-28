@@ -15,6 +15,7 @@ library(lubridate)
 library(forecast)
 library(tseries)
 library(Metrics)
+library(zoo)
 ```
 
 
@@ -287,12 +288,27 @@ VWAPforecast <- VWAPforecast %>%
          ErrorBps = ErrorPct*100)
 
 
+# Calculate Naive VWAP estimates
+VWAPforecast$NaiveVWAP1 = lag(VWAPforecast$ActualVWAP) # use yesterday's vwap
+VWAPforecast$NaiveVWAP2 = rollmean(VWAPforecast$ActualVWAP, 3, na.pad = TRUE,
+                                   align = "right") # rolling average
+
+
+VWAPforecast <- VWAPforecast %>%
+  mutate(NaiveErrorPct1 = (NaiveVWAP1 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps1 = NaiveErrorPct1*100,
+         NaiveErrorPct2 = (NaiveVWAP2 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps2 = NaiveVWAP2*100)
+
+
 # Plot VWAP error percentage on the LHS y-axis and price volatility on RHS y-axis
 plot(VWAPforecast$Date,
      VWAPforecast$ErrorPct,
-     type = 'l', col = 'red',
+     type = 'l', col = 'firebrick1',
      main = 'VWAP Forecast Error Percentage and Price Volatility',
-     ylab = 'Error (%)', xlab = 'Date', ylim = range(-0.19, 0.1))
+     ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2))
+lines(VWAPforecast$Date, VWAPforecast$NaiveErrorPct1, col = "darkorange")
+lines(VWAPforecast$Date, VWAPforecast$NaiveErrorPct2, col = "darkorange3")
 
 abline(h = 0, col = "pink", lty = 2)
 
@@ -303,10 +319,9 @@ plot(VWAPforecast$Date,
      ylim = range(0, 2.5))
 axis(side = 4)
 mtext('Price Volatility', side = 4, line = 3)
-legend("topright", legend = c("VWAP Error (%)", "Price Volatility"), col = c("red", "darkblue"), lty = 1, cex = 0.75)
+legend("bottomright", legend = c("VWAP Error (%)", "Naive Strategies Error (%)", "Price Volatility"), col = c("firebrick1", "darkorange", "darkblue"), lty = 1, cex = 0.5)
 
 abline(h = 0, col = "lightblue", lty = 2)
-
 
 ```
 
