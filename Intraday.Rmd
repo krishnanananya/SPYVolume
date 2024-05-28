@@ -22,7 +22,7 @@ library(Metrics)
 Subset to full weeks in 2024. Remove data for non-trading hours to avoid complexities with dealing with seasonality across the 5 trading days in a week but no volumes over weekends.
 ```{r}
 df <- read.csv('SPY_intraday.csv')
-vol <- df[c('timestamp', 'volume')]
+vol <- df[c('timestamp', 'volume', 'close')]
 vol$timestamp <- as.POSIXct(vol$timestamp, format = "%Y-%m-%d %H:%M:%S")
 vol$timestamp <- vol$timestamp - hours(3)
 
@@ -132,8 +132,7 @@ plot(decomp)
 
 
 
-## Model Fitting
-### a) ARIMA()
+## Model Fitting -- ARIMA()
 Strong seasonality component that repeats every 8 hours (daily)
 ```{r}
 # Diagnosis Plots
@@ -154,7 +153,7 @@ plot(forecast_values)
 ```
 
 
-Predicting Using ARIMA Model
+### Predicting Using ARIMA Model
 ```{r}
 # Define training and test periods
 train_start_date <- as.Date("2024-01-08")
@@ -210,7 +209,7 @@ cat("Average MAPE:", avg_mape, "\n")
 ```
 
 
-Plotting Predictions
+### Plotting Predictions
 ```{r}
 # Combine all forecasts and actuals into one dataframe for plotting
 all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
@@ -258,3 +257,56 @@ legend("topright", legend = c("Actual", "Forecast"),
 
 
 ```
+
+
+
+### VWAP Predictions
+Forecasted VWAP is very tight to actual VWAP - generally within plus/minus 5bps (with the exception of the first day which was at 20bps, which corresponded to a difference in absolute dollars of $0.93).
+
+```{r}
+# Combine forecasted volumes with pricing data and save into new dataframe
+vwap <- merge(all_forecasts, trading_hours, by.x="DateTime", by.y="Timestamp", all.x = TRUE)
+
+
+# Calculate predicted and actual trade amounts
+vwap <- vwap %>%
+  mutate(PredTradeAmt = Forecast * close,
+         ActualTradeAmt = Actual * close)
+
+
+# Calculate VWAP for Each Day
+VWAPforecast <- vwap %>%
+  group_by(Date) %>%
+  summarize(PredVWAP = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast, na.rm = TRUE),
+            ActualVWAP = sum(ActualTradeAmt, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+            AvgPrice = mean(close, na.rm = TRUE),
+            PriceVol = sd(close, na.rm = TRUE))
+
+VWAPforecast <- VWAPforecast %>%
+  mutate(ErrorPct = (PredVWAP - ActualVWAP) / AvgPrice * 100,
+         ErrorBps = ErrorPct*100)
+
+
+# Plot VWAP error percentage on the LHS y-axis and price volatility on RHS y-axis
+plot(VWAPforecast$Date,
+     VWAPforecast$ErrorPct,
+     type = 'l', col = 'red',
+     main = 'VWAP Forecast Error Percentage and Price Volatility',
+     ylab = 'Error (%)', xlab = 'Date', ylim = range(-0.19, 0.1))
+
+abline(h = 0, col = "pink", lty = 2)
+
+par(new = TRUE)
+plot(VWAPforecast$Date,
+     VWAPforecast$PriceVol,
+     type = 'l', col = 'darkblue', axes = FALSE, xlab = '', ylab = '',
+     ylim = range(0, 2.5))
+axis(side = 4)
+mtext('Price Volatility', side = 4, line = 3)
+legend("topright", legend = c("VWAP Error (%)", "Price Volatility"), col = c("red", "darkblue"), lty = 1, cex = 0.75)
+
+abline(h = 0, col = "lightblue", lty = 2)
+
+
+```
+
