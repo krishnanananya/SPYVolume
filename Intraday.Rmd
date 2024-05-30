@@ -118,8 +118,8 @@ abline(v=as.POSIXct(c("2024-05-27 9:30:00", "2024-05-27 16:00:00")), col="blue")
 
 
 # ACF/PACF plots
-acf(trading_hours$Volume)
-pacf(trading_hours$Volume)
+acf(trading_hours$Volume, main = "ACF Plot - Intraday Volume")
+pacf(trading_hours$Volume, main = "Partial ACF Plot - Intraday Volume")
 
 
 # Convert to time series - frequency is weekly because of issues that arise due to no trading on weekends if freq = 24
@@ -155,6 +155,125 @@ plot(forecast_values)
 
 
 ### Predicting Using ARIMA Model
+#####  ARIMA(1, 0, 2)(0, 1, 2)
+One potential model given the EDA
+```{r}
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  train_data <- trading_hours %>% filter(Date < test_date)
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- arima(ts_train, order = c(1, 0, 2), seasonal = c(0, 1, 2))
+  summary(fit)
+  checkresiduals(fit)
+  
+  # Forecast for the test date (8 trading hours)
+  forecast_values <- forecast(fit, h = 8)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+#####  ARIMA(1, 0, 3)(0, 1, 2)
+Another potential model given the EDA
+```{r}
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  train_data <- trading_hours %>% filter(Date < test_date)
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- arima(ts_train, order = c(1, 0, 3), seasonal = c(0, 1, 2))
+  summary(fit)
+  checkresiduals(fit)
+  
+  # Forecast for the test date (8 trading hours)
+  forecast_values <- forecast(fit, h = 8)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+
+
+##### Best Model At Each Time Step
 ```{r}
 # Define training and test periods
 train_start_date <- as.Date("2024-01-08")
@@ -180,7 +299,8 @@ for (test_date in dates) {
   # Fit ARIMA model on training data
   fit <- auto.arima(ts_train, seasonal = TRUE)
   summary(fit)
-  
+  checkresiduals(fit)
+
   # Forecast for the test date (8 trading hours)
   forecast_values <- forecast(fit, h = 8)
   
@@ -199,6 +319,7 @@ for (test_date in dates) {
   mape_list[[as.character(test_date)]] <- mape_value
   forecasts[[as.character(test_date)]] <- forecast_values
   actuals[[as.character(test_date)]] <- actual_values
+
 }
 
 # Calculate average MSE and MAPE across all predictions
@@ -305,10 +426,11 @@ VWAPforecast <- VWAPforecast %>%
 plot(VWAPforecast$Date,
      VWAPforecast$ErrorPct,
      type = 'l', col = 'firebrick1',
-     main = 'VWAP Forecast Error Percentage and Price Volatility',
+     main = 'VWAP Forecast Error Percentage',
      ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2))
 lines(VWAPforecast$Date, VWAPforecast$NaiveErrorPct1, col = "darkorange")
 lines(VWAPforecast$Date, VWAPforecast$NaiveErrorPct2, col = "darkorange3")
+legend("bottomright", legend = c("VWAP Error (%)", "Naive Strategies Error (%)"), col = c("firebrick1", "darkorange"), lty = 1, cex = 0.5)
 
 abline(h = 0, col = "pink", lty = 2)
 
@@ -320,6 +442,7 @@ plot(VWAPforecast$Date,
 axis(side = 4)
 mtext('Price Volatility', side = 4, line = 3)
 legend("bottomright", legend = c("VWAP Error (%)", "Naive Strategies Error (%)", "Price Volatility"), col = c("firebrick1", "darkorange", "darkblue"), lty = 1, cex = 0.5)
+
 
 abline(h = 0, col = "lightblue", lty = 2)
 
