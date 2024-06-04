@@ -23,7 +23,7 @@ library(zoo)
 Subset to full weeks in 2024. Remove data for non-trading hours to avoid complexities with dealing with seasonality across the 5 trading days in a week but no volumes over weekends.
 ```{r}
 df <- read.csv('SPY_intraday.csv')
-vol <- df[c('timestamp', 'volume', 'close')]
+vol <- df#[c('timestamp', 'volume', 'close')]
 vol$timestamp <- as.POSIXct(vol$timestamp, format = "%Y-%m-%d %H:%M:%S")
 vol$timestamp <- vol$timestamp - hours(3)
 
@@ -136,9 +136,13 @@ plot(decomp)
 ## Model Fitting -- ARIMA()
 Strong seasonality component that repeats every 8 hours (daily)
 ```{r}
-# Diagnosis Plots
+# Diagnosis Plots Raw
 acf(trading_hours$Volume)
 pacf(trading_hours$Volume)
+
+# Diagnosis Plots w/Seasonal Differencing
+acf(diff(trading_hours$Volume, lag=8, differences=1))
+pacf(diff(trading_hours$Volume, lag=8, differences=1))
 
 # Fit best ARIMA model
 fit <- auto.arima(ts_data, seasonal = TRUE)
