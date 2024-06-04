@@ -1,0 +1,505 @@
+---
+title: "Intraday_nonARIMA"
+author: "Martin Pollack"
+date: "2024-05-30"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(tseries)
+library(Metrics)
+library(zoo)
+```
+
+# Read Data
+```{r}
+trading_hours = read.csv("trading_hours.csv")
+start_date = "2024-01-08"
+end_date = "2024-05-16"
+trading_hours = trading_hours[trading_hours$Timestamp >= start_date,]
+trading_hours = trading_hours[trading_hours$Timestamp <= end_date,]
+
+# Convert to time series - frequency is weekly because of issues that arise due to no trading on weekends if freq = 24
+ts_data <- ts(trading_hours$Volume, frequency = 8)
+```
+
+# Frequency Domain
+
+```{r}
+ftrans <- function(x){
+  N <- length(x)
+  a <- fft(x)
+  freq <- (0:(N/2))/N
+  a <- a[ 1:length(freq)]
+  list( freq= freq, ampl = abs( a), phase=Arg(a))
+}
+
+plotfourier <- function( x){
+  x <- ftrans(x)
+  plot( x$freq, x$ampl, type="h", xlab=" Frequency", ylab="Amplitude")
+}
+```
+
+## Plot Fourier
+
+```{r}
+plotfourier(ts_data)
+```
+
+## Plot Periodogram
+```{r}
+plot(1:360, abs(fft(ts_data)[2:361])^2 / length(ts_data), type = "h", ylab = "Periodogram")
+abline(h=0)
+abline(h=1e+14)
+```
+
+
+There appears to be some leakage.
+
+```{r}
+freq_fit <- function(ts_train, test_data, m) {
+  n = length(ts_train)
+  
+  high_freq_indices_m = order(abs(fft(ts_train)[2:(n/2 + 1)])^2 / n, decreasing=TRUE)[1:m]
+  
+  f = high_freq_indices_m / n
+  
+  input_data = data.frame(y = ts_train)
+  tme_train = 0:(n-1)
+  for (j in 1:m) {
+    input_data[,paste0("cos", as.character(j))] = cos(2*pi*f[j]*tme_train)
+    
+    input_data[,paste0("sin", as.character(j))] = sin(2*pi*f[j]*tme_train)
+  }
+
+  reg = lm(y ~ ., data=input_data)
+  
+  prediction_data = data.frame(intercept=rep(1, 8))
+  tme_test = n:(n+7)
+  for (j in 1:m) {
+    prediction_data[,paste0("cos", as.character(j))] = cos(2*pi*f[j]*tme_test)
+    
+    prediction_data[,paste0("sin", as.character(j))] = sin(2*pi*f[j]*tme_test)
+  }
+  
+  predicted_data = predict(reg, newdata=prediction_data)
+  
+  mse_freq = mse(test_data, predicted_data)
+  
+  predicted_data_nonzero = predicted_data
+  predicted_data_nonzero[predicted_data_nonzero < 0] = 0
+  mse_freq_nonzero = mse(test_data, predicted_data_nonzero)
+  
+  mape_freq = mape(test_data, predicted_data)
+  
+  predicted_data_nonzero = predicted_data
+  predicted_data_nonzero[predicted_data_nonzero < 0] = 0
+  mape_freq_nonzero = mape(test_data, predicted_data_nonzero)
+  
+  return(c(mse_freq=mse_freq, 
+           mse_freq_nonzero=mse_freq_nonzero,
+           mape_freq=mape_freq, 
+           mape_freq_nonzero=mape_freq_nonzero))
+}
+```
+
+```{r}
+freq_cv <- function(data, m) {
+  
+  # Define training and test periods
+  train_start_date <- as.Date("2024-01-08")
+  test_start_date <- as.Date("2024-05-01")
+  test_end_date <- as.Date("2024-05-15")
+
+  # Define dates to loop through in testing
+  dates <- data$Date[data$Date >= test_start_date & data$Date <= test_end_date]
+  dates <- dates[!duplicated(dates)]
+
+  mse_list <- list()
+  mse_nonzero_list <- list()
+  
+  mape_list <- list()
+  mape_nonzero_list <- list()
+  
+  for (test_date in dates) {
+    # Define training data
+    train_data <- data %>% filter(Date < test_date)
+    ts_train <- ts(train_data$Volume, frequency = 8)
+    
+    # Extract actual values for the test date
+    test_data <- data %>%
+      filter(Date == test_date) %>%
+      select(Volume) %>%
+      unlist()
+    
+    fit_results = freq_fit(ts_train, test_data, m)
+    
+    # Store results in list
+    mse_list[[as.character(test_date)]] <- fit_results["mse_freq"]
+    mse_nonzero_list[[as.character(test_date)]] <- fit_results["mse_freq_nonzero"]
+    
+    mape_list[[as.character(test_date)]] <- fit_results["mape_freq"]
+    mape_nonzero_list[[as.character(test_date)]] <- fit_results["mape_freq_nonzero"]
+  }
+  
+  # Calculate average MSE and MAPE across all predictions
+  avg_mse <- mean(unlist(mse_list))
+  avg_mse_nonzero <- mean(unlist(mse_nonzero_list))
+  
+  avg_mape <- mean(unlist(mape_list))
+  avg_mape_nonzero <- mean(unlist(mape_nonzero_list))
+
+  cat("Average MSE (m=", m, "):", avg_mse, "\n")
+  cat("Average MSE Nonzero (m=", m, "):", avg_mse_nonzero, "\n")
+  
+  cat("Average MAPE (m=", m, "):", avg_mape, "\n")
+  cat("Average MAPE Nonzero (m=", m, "):", avg_mape_nonzero, "\n")
+}
+```
+
+```{r}
+freq_cv(trading_hours, 3)
+```
+
+```{r}
+for (m in 1:200) {
+  print(m)
+  freq_cv(trading_hours, m)
+  print("************************************************************")
+}
+# m=3 seems to be best
+# Overfitting happens very quickly. For larger m, taking nonzero predictions makes bigger difference. MAPE and MSE seem to show very different things (for high m, MSE is super high but MAPE is super low)
+```
+
+# ARIMAX (adding technical indicator covariates)
+```{r}
+library(TTR)
+```
+```{r}
+trading_hours = read.csv('trading_hours.csv')
+start_date = "2024-01-03"
+end_date = "2024-05-16"
+trading_hours_full = trading_hours[trading_hours$Timestamp >= start_date,]
+trading_hours_full = trading_hours_full[trading_hours_full$Timestamp <= end_date,]
+
+nrow(trading_hours_full[trading_hours_full$Timestamp < "2024-01-08",])
+```
+
+```{r}
+adx = function(n) ADX(trading_hours_full[,c("high", "low", "close")], n=n)[-(1:24),4]
+
+dema = function(n) DEMA(trading_hours_full$close, n=n)[-(1:24)]
+
+ema = function(n) EMA(trading_hours_full$close, n=n)[-(1:24)]
+
+mom = function(n) momentum(trading_hours_full$close, n=n)[-(1:24)]
+
+roc = function(n) ROC(trading_hours_full$close, n=n)[-(1:24)]
+
+rsi = function(n) RSI(trading_hours_full$close, n=n)[-(1:24)]
+
+sma = function(n) SMA(trading_hours_full$close, n=n)[-(1:24)]
+
+wpr = function(n) WPR(trading_hours_full[,c("high", "low", "close")], n=n)[-(1:24)]
+
+fastK = function(n) stoch(trading_hours_full[,c("high", "low", "close")], nFastK=n, nFastD=n)[-(1:24),1]
+fastD = function(n) stoch(trading_hours_full[,c("high", "low", "close")], nFastK=n, nFastD=n)[-(1:24),2]
+
+trading_hours = trading_hours_full[-c(1:24),]
+```
+
+## ADX
+
+```{r}
+covariate_data = cbind(
+                        adx(3)
+                        # dema,
+                        # ema,
+                        # mom,
+                        # roc,
+                        # rsi,
+                        # sma,
+                        # wpr,
+                        # fastK,
+                        # fastD
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(trading_hours$Date < test_date)
+  train_data <- trading_hours[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+
+  # Forecast for the test date (8 trading hours)
+  test_covariates <- covariate_data[trading_hours$Date == test_date,]
+  
+  forecast_values <- forecast(fit, h = 8, xreg=test_covariates)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+## ADX, EMA
+
+```{r}
+covariate_data = cbind(
+                        adx(5),
+                        # dema,
+                        ema(5)
+                        # mom,
+                        # roc,
+                        # rsi,
+                        # sma,
+                        # wpr,
+                        # fastK,
+                        # fastD
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(trading_hours$Date < test_date)
+  train_data <- trading_hours[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+
+  # Forecast for the test date (8 trading hours)
+  test_covariates <- covariate_data[trading_hours$Date == test_date,]
+  
+  forecast_values <- forecast(fit, h = 8, xreg=test_covariates)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+## ADX, EMA, MOM
+```{r}
+covariate_data = cbind(
+                        adx(3),
+                        # dema,
+                        ema(5),
+                        mom(1)
+                        # roc,
+                        # rsi,
+                        # sma,
+                        #wpr(5),
+                        # fastK,
+                        # fastD
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(trading_hours$Date < test_date)
+  train_data <- trading_hours[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+
+  # Forecast for the test date (8 trading hours)
+  test_covariates <- covariate_data[trading_hours$Date == test_date,]
+  
+  forecast_values <- forecast(fit, h = 8, xreg=test_covariates)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+## ADX, MOM
+```{r}
+covariate_data = cbind(
+                        adx(3),
+                        # dema,
+                        # ema(5),
+                        mom(1)
+                        # roc,
+                        # rsi,
+                        # sma,
+                        #wpr(5),
+                        # fastK,
+                        # fastD
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2024-01-08")
+test_start_date <- as.Date("2024-05-01")
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- trading_hours$Date[trading_hours$Date >= test_start_date & trading_hours$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(trading_hours$Date < test_date)
+  train_data <- trading_hours[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 8)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+
+  # Forecast for the test date (8 trading hours)
+  test_covariates <- covariate_data[trading_hours$Date == test_date,]
+  
+  forecast_values <- forecast(fit, h = 8, xreg=test_covariates)
+  
+  # Extract actual values for the test date
+  actual_values <- trading_hours %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+
