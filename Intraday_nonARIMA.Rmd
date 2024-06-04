@@ -183,6 +183,57 @@ for (m in 1:200) {
 # Overfitting happens very quickly. For larger m, taking nonzero predictions makes bigger difference. MAPE and MSE seem to show very different things (for high m, MSE is super high but MAPE is super low)
 ```
 
+
+### VWAP calcs
+
+```{r}
+# Combine all forecasts and actuals into one dataframe for plotting
+all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
+                            Forecast_freq = -100000,
+                            Actual = -10000)
+
+for (test_date in dates)
+{
+  forecast_freq_values <- forecasts_freq[[as.character(test_date)]]$predicted
+  actual_values <- actuals[[as.character(test_date)]]
+  hours <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date), "09:00:00")),
+                      by = "hour", length.out = 8)
+  
+  temp_df <- data.frame(DateTime = hours,
+                        Forecast_freq = forecast_freq_values,
+                        Actual = actual_values)
+  
+  all_forecasts <- rbind(all_forecasts, temp_df)
+}
+
+all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
+
+
+# Create Volume dataframe
+vwap <- merge(all_forecasts, trading_hours, by.x="DateTime", by.y="Timestamp", all.x = TRUE)
+
+# Calculate predicted and actual trade amounts
+vwap <- vwap %>%
+  mutate(PredTradeAmt = Forecast_freq * close,
+         ActualTradeAmt = Actual * close)
+
+
+# Calculate VWAP for Each Day
+VWAPforecastfreq <- vwap %>%
+  group_by(Date) %>%
+  summarize(PredVWAPFreq = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast_freq, na.rm = TRUE),
+            ActualVWAP = sum(ActualTradeAmt, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+            AvgPrice = mean(close, na.rm = TRUE),
+            PriceVol = sd(close, na.rm = TRUE))
+
+# Create VWAP Forecast Dataframe
+VWAPforecastfreq <- VWAPforecastfreq %>%
+  mutate(ErrorPctFreq = (PredVWAPFreq - ActualVWAP) / AvgPrice * 100,
+         ErrorBpsFreq = ErrorPctFreq*100)
+
+```
+
+
 # ARIMAX (adding technical indicator covariates)
 ```{r}
 library(TTR)
@@ -297,28 +348,21 @@ cat("Average MAPE:", avg_mape, "\n")
 
 ## Plot ARIMAX results
 ```{r}
-
-
 # Combine all forecasts and actuals into one dataframe for plotting
 all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
-                            Forecast_arima = -100000,
                             Forecast_arimax = -100000,
-                            Forecast_freq = -100000,
                             Actual = -10000)
 
 for (test_date in dates)
 {
   # forecast_arima_values <- forecasts_arima[[as.character(test_date)]]
   forecast_arimax_values <- forecasts_arimax[[as.character(test_date)]]
-  forecast_freq_values <- forecasts_freq[[as.character(test_date)]]$predicted
   actual_values <- actuals[[as.character(test_date)]]
   hours <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date), "09:00:00")),
                       by = "hour", length.out = 8)
   
   temp_df <- data.frame(DateTime = hours,
-                        #Forecast_arima = forecast_arima_values$mean,
                         Forecast_arimax = forecast_arimax_values$mean,
-                        Forecast_freq = forecast_freq_values,
                         Actual = actual_values)
   
   all_forecasts <- rbind(all_forecasts, temp_df)
@@ -332,7 +376,7 @@ plot(all_forecasts$Actual, type = 'l',
      col = alpha('black', 1), lwd=2, ylim = range(all_forecasts$Forecast_arimax, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
 #lines( all_forecasts$Forecast_arima, col = alpha('red', 0.8))
 lines( all_forecasts$Forecast_arimax, col = alpha('blue', 0.8))
-lines( all_forecasts$Forecast_freq, col = alpha('orange', 0.8))
+#lines( all_forecasts$Forecast_freq, col = alpha('orange', 0.8))
 legend("topright", legend = c("Actual", "Forecast ARIMAX", "Forecast Frequency Domain"),
        col = c(alpha("black", 1), 
                #alpha("red", 0.8), 
@@ -350,7 +394,7 @@ plot(trading_hours$Volume, type = 'l',
      xlim = range(500:end_index))
 lines(start_index:end_index, all_forecasts$Actual, type = 'l',
      col = alpha('black', 1), ylim = range(all_forecasts$Forecast_arimax, all_forecasts$Actual))
-lines(start_index:end_index, all_forecasts$Forecast_arima, col = alpha('red', 0.8))
+#lines(start_index:end_index, all_forecasts$Forecast_arima, col = alpha('red', 0.8))
 lines(start_index:end_index, all_forecasts$Forecast_arimax, col = alpha('blue', 0.8))
 legend("topright", legend = c("Actual", "Forecast ARIMA", "Forecast ARIMAX"),
        col = c(alpha("black", 1), alpha("red", 0.8), alpha("blue", 0.8)), lty = 1)
@@ -367,14 +411,14 @@ vwap <- merge(all_forecasts, trading_hours, by.x="DateTime", by.y="Timestamp", a
 
 # Calculate predicted and actual trade amounts
 vwap <- vwap %>%
-  mutate(PredTradeAmt = Forecast * close,
+  mutate(PredTradeAmt = Forecast_arimax * close,
          ActualTradeAmt = Actual * close)
 
 
 # Calculate VWAP for Each Day
 VWAPforecast <- vwap %>%
   group_by(Date) %>%
-  summarize(PredVWAPSarimax = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast, na.rm = TRUE),
+  summarize(PredVWAPSarimax = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast_arimax, na.rm = TRUE),
             ActualVWAP = sum(ActualTradeAmt, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
             AvgPrice = mean(close, na.rm = TRUE),
             PriceVol = sd(close, na.rm = TRUE))
@@ -385,7 +429,12 @@ VWAPforecast <- VWAPforecast %>%
          ErrorBpsSarimax = ErrorPctSarimax*100)
 
 
+
+## Merge all VWAP dataframes for all 3 models 
 VWAPall <- merge(VWAParima, VWAPforecast, by.x = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'),
+      by.y = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'))
+
+VWAPall <- merge(VWAPall, VWAPforecastfreq, by.x = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'),
       by.y = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'))
 
 
@@ -396,9 +445,11 @@ plot(VWAPall$Date,
      main = 'VWAP Forecast Error Percentage',
      ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2))
 lines(VWAPall$Date, VWAPall$ErrorPctSarimax, col = "firebrick4")
+lines(VWAPall$Date, VWAPall$ErrorPctFreq, col = "orange3")
+
 lines(VWAPall$Date, VWAPall$NaiveErrorPct1, col = "blue4")
 lines(VWAPall$Date, VWAPall$NaiveErrorPct2, col = "blue1")
-legend("bottomright", legend = c("SARIMA", "SARIMAX", "Naive Strategies"), col = c("firebrick1", "firebrick4", "blue"), lty = 1, cex = 0.5)
+legend("bottomright", legend = c("SARIMA", "SARIMAX", "Frequency Domain", "Naive Strategies"), col = c("firebrick1", "firebrick4", "orange3", "blue"), lty = 1, cex = 0.5)
 
 abline(h = 0, col = "pink", lty = 2)
 ```
