@@ -291,7 +291,7 @@ dates <- dates[!duplicated(dates)]
 # Initialize lists to store results
 mse_list <- list()
 mape_list <- list()
-forecasts <- list()
+forecasts_arima <- list()
 actuals <- list()
 
 # Loop through each test date
@@ -321,7 +321,7 @@ for (test_date in dates) {
   # Store results in list
   mse_list[[as.character(test_date)]] <- mse_value
   mape_list[[as.character(test_date)]] <- mape_value
-  forecasts[[as.character(test_date)]] <- forecast_values
+  forecasts_arima[[as.character(test_date)]] <- forecast_values
   actuals[[as.character(test_date)]] <- actual_values
 
 }
@@ -338,7 +338,7 @@ cat("Average MAPE:", avg_mape, "\n")
 ### Plotting Predictions
 ```{r}
 # Combine all forecasts and actuals into one dataframe for plotting
-all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
+all_forecasts_arima <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
                             Forecast = -100000,
                             Actual = -10000)
 
@@ -353,31 +353,31 @@ for (test_date in dates)
                         Forecast = forecast_values$mean,
                         Actual = actual_values)
   
-  all_forecasts <- rbind(all_forecasts, temp_df)
+  all_forecasts_arima <- rbind(all_forecasts_arima, temp_df)
 }
 
-all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
+all_forecasts_arima = all_forecasts_arima[-1,] # Remove arbitrary first entry
 
 
 # Plot combined forecast vs actual - no historical data
-plot(all_forecasts$Actual, type = 'l',
-     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
-lines( all_forecasts$Forecast, col = 'red')
+plot(all_forecasts_arima$Actual, type = 'l',
+     col = 'black', ylim = range(all_forecasts_arima$Forecast, all_forecasts_arima$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+lines( all_forecasts_arima$Forecast, col = 'red')
 legend("topright", legend = c("Actual", "Forecast"),
        col = c("black", "red"), lty = 1)
 
 
 # Plot combined forecast vs actual - with historical data
 start_index = length(trading_hours$Volume)+1
-end_index = length(trading_hours$Volume)+length(all_forecasts$Actual)
+end_index = length(trading_hours$Volume)+length(all_forecasts_arima$Actual)
 
 plot(trading_hours$Volume, type = 'l',
      xlab = "DateTime", ylab = "Volume",
      main = "Forecasted vs Actual Trading Volume",
      xlim = range(500:end_index))
-lines(start_index:end_index, all_forecasts$Actual, type = 'l',
-     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual))
-lines(start_index:end_index, all_forecasts$Forecast, col = 'red')
+lines(start_index:end_index, all_forecasts_arima$Actual, type = 'l',
+     col = 'black', ylim = range(all_forecasts_arima$Forecast, all_forecasts_arima$Actual))
+lines(start_index:end_index, all_forecasts_arima$Forecast, col = 'red')
 legend("topright", legend = c("Actual", "Forecast"),
        col = c("black", "red"), lty = 1)
 
