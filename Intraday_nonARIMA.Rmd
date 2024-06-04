@@ -293,8 +293,12 @@ cat("Average MSE:", avg_mse, "\n")
 cat("Average MAPE:", avg_mape, "\n")
 ```
 
+
+
 ## Plot ARIMAX results
 ```{r}
+
+
 # Combine all forecasts and actuals into one dataframe for plotting
 all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
                             Forecast_arima = -100000,
@@ -304,7 +308,7 @@ all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
 
 for (test_date in dates)
 {
-  forecast_arima_values <- forecasts_arima[[as.character(test_date)]]
+  # forecast_arima_values <- forecasts_arima[[as.character(test_date)]]
   forecast_arimax_values <- forecasts_arimax[[as.character(test_date)]]
   forecast_freq_values <- forecasts_freq[[as.character(test_date)]]$predicted
   actual_values <- actuals[[as.character(test_date)]]
@@ -312,7 +316,7 @@ for (test_date in dates)
                       by = "hour", length.out = 8)
   
   temp_df <- data.frame(DateTime = hours,
-                        Forecast_arima = forecast_arima_values$mean,
+                        #Forecast_arima = forecast_arima_values$mean,
                         Forecast_arimax = forecast_arimax_values$mean,
                         Forecast_freq = forecast_freq_values,
                         Actual = actual_values)
@@ -350,6 +354,53 @@ lines(start_index:end_index, all_forecasts$Forecast_arima, col = alpha('red', 0.
 lines(start_index:end_index, all_forecasts$Forecast_arimax, col = alpha('blue', 0.8))
 legend("topright", legend = c("Actual", "Forecast ARIMA", "Forecast ARIMAX"),
        col = c(alpha("black", 1), alpha("red", 0.8), alpha("blue", 0.8)), lty = 1)
+```
+
+### VWAP calcs
+
+```{r}
+# Read in SARIMA data
+VWAParima = readRDS('VWAParima.rds')
+
+# Create Volume dataframe
+vwap <- merge(all_forecasts, trading_hours, by.x="DateTime", by.y="Timestamp", all.x = TRUE)
+
+# Calculate predicted and actual trade amounts
+vwap <- vwap %>%
+  mutate(PredTradeAmt = Forecast * close,
+         ActualTradeAmt = Actual * close)
+
+
+# Calculate VWAP for Each Day
+VWAPforecast <- vwap %>%
+  group_by(Date) %>%
+  summarize(PredVWAPSarimax = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast, na.rm = TRUE),
+            ActualVWAP = sum(ActualTradeAmt, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+            AvgPrice = mean(close, na.rm = TRUE),
+            PriceVol = sd(close, na.rm = TRUE))
+
+# Create VWAP Forecast Dataframe
+VWAPforecast <- VWAPforecast %>%
+  mutate(ErrorPctSarimax = (PredVWAPSarimax - ActualVWAP) / AvgPrice * 100,
+         ErrorBpsSarimax = ErrorPctSarimax*100)
+
+
+VWAPall <- merge(VWAParima, VWAPforecast, by.x = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'),
+      by.y = c('Date', 'ActualVWAP', 'AvgPrice', 'PriceVol'))
+
+
+# Plot VWAP error percentage for each model
+plot(VWAPall$Date,
+     VWAPall$ErrorPct,
+     type = 'l', col = 'firebrick1',
+     main = 'VWAP Forecast Error Percentage',
+     ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2))
+lines(VWAPall$Date, VWAPall$ErrorPctSarimax, col = "firebrick4")
+lines(VWAPall$Date, VWAPall$NaiveErrorPct1, col = "blue4")
+lines(VWAPall$Date, VWAPall$NaiveErrorPct2, col = "blue1")
+legend("bottomright", legend = c("SARIMA", "SARIMAX", "Naive Strategies"), col = c("firebrick1", "firebrick4", "blue"), lty = 1, cex = 0.5)
+
+abline(h = 0, col = "pink", lty = 2)
 ```
 
 ## ADX
