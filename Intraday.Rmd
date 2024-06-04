@@ -425,6 +425,11 @@ VWAPforecast <- VWAPforecast %>%
          NaiveErrorPct2 = (NaiveVWAP2 - ActualVWAP) / AvgPrice * 100,
          NaiveErrorBps2 = NaiveVWAP2*100)
 
+saveRDS(VWAPforecast, "VWAParima.rds")
+
+
+
+
 
 # Plot VWAP error percentage on the LHS y-axis and price volatility on RHS y-axis
 plot(VWAPforecast$Date,
