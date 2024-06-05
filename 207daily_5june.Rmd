@@ -1,0 +1,297 @@
+---
+title: "myproject.207"
+author: "Alma Cooper"
+date: "2024-06-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r }
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(tseries)
+library(Metrics)
+library(zoo)
+```
+
+```{r}
+library(tidyverse)
+library(astsa)
+library(forecast)
+df <- read.csv("C:/Users/Alma Cooper/Downloads/SPY.csv")
+close_data = df%>% select(Adj.Close, Volume, Date)
+plot(close_data)
+fullhist <- df[c('Date', 'Volume')]
+fullhist$Date <- as.Date(fullhist$Date)
+```
+
+
+
+```{r}
+# Full history
+plot(fullhist, type = 'l', main = 'SPY Daily Trading Volume - Full History')
+grid()
+
+# Last decade
+post2013 <- fullhist[fullhist$Date > "2013-12-31",]
+#close_data <- close_data[close_data$Date > "2013-12-31",]
+plot(post2013, type = 'l', main = 'SPY Daily Trading Volume Over the Last Decade')
+grid()
+
+# ACF/PACF plots
+acf(post2013$Volume)
+pacf(post2013$Volume)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+
+```{r}
+
+##check to see something 
+#test test test 
+ts_data <- ts(post2013$Volume)
+
+#by month as freq
+post2013_ts <- ts(post2013$Volume)
+# Decompose Time Series
+#decomp <- decompose(post2013_ts)
+#plot(decomp)
+
+#frequency: 20
+length(post2013_ts)
+frequency(post2013_ts)
+#test test test done 
+
+
+# Fit best ARIMA model
+fit <- auto.arima(post2013_ts, seasonal = TRUE)
+summary(fit)
+
+residuals <- fit$residuals
+plot(residuals)
+checkresiduals(fit)
+
+# Forecast
+forecast_values <- forecast(fit, h=3)
+plot(forecast_values)
+
+#seeing
+# Define the range for x-axis
+x_start <- 2550
+x_end <- 2620  # Adjust as necessary
+
+# Create a sequence for the x-axis (this assumes your original series is indexed by integer positions)
+time_series_length <- length(post2013_ts)
+forecast_start <- time_series_length + 1
+forecast_end <- forecast_start + length(forecast_values$mean) - 1
+
+# Generate the full x-axis sequence
+full_x_axis <- c(1:time_series_length, forecast_start:forecast_end)
+
+# Extract the relevant part of the series for plotting
+plot_x_range <- full_x_axis[full_x_axis >= x_start & full_x_axis <= x_end]
+actual_values <- post2013_ts[plot_x_range[plot_x_range <= time_series_length]]
+forecast_mean <- forecast_values$mean[plot_x_range[plot_x_range > time_series_length] - time_series_length]
+forecast_lower <- forecast_values$lower[plot_x_range[plot_x_range > time_series_length] - time_series_length, 2]
+forecast_upper <- forecast_values$upper[plot_x_range[plot_x_range > time_series_length] - time_series_length, 2]
+
+# Combine actual and forecasted values
+combined_values <- c(actual_values, forecast_mean)
+
+# Plot actual values and forecasted values
+plot(plot_x_range, combined_values, type = 'l', col = 'blue',
+     xlim = c(x_start, x_end),
+     ylim = range(c(actual_values, forecast_mean, forecast_lower, forecast_upper)),
+     xlab = "Index", ylab = "Volume", main = "Forecasted vs. Actual Volumes")
+
+# Add forecasted values
+lines(plot_x_range[plot_x_range > time_series_length], forecast_mean, col = 'purple', lty = 2)
+# end seeing 
+
+
+
+```
+
+```{r}
+
+### Predicting Using ARIMA Model
+
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+
+test_end_date <- as.Date("2024-05-15")
+
+# Define dates to loop through in testing
+dates <- post2013$Date[post2013$Date >= test_start_date & post2013$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  train_data <- post2013 %>% filter(post2013$Date< test_date)
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  fit <- arima(ts_train, order = c(3,1,3))
+  summary(fit)
+  
+  # Forecast for the test date
+  forecast_values <- forecast(fit, h = 3)
+  
+  # Extract actual values for the test date
+  actual_values <- post2013 %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+### Plotting Predictions
+```{r}
+# Combine all forecasts and actuals into one dataframe for plotting
+all_forecasts <- data.frame(Date= as.POSIXct("1900-01-01"),
+                            Forecast = -100000,
+                            Actual = -10000)
+
+for (test_date in dates)
+{
+  forecast_values <- forecasts[[as.character(test_date)]]
+  actual_values <- actuals[[as.character(test_date)]]
+  days <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date))),
+                      by = "day", length.out = 3)
+  
+  temp_df <- data.frame(Date = days,
+                        Forecast = forecast_values$mean,
+                        Actual = actual_values)
+  
+  all_forecasts <- rbind(all_forecasts, temp_df)
+}
+
+all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
+
+
+# Plot combined forecast vs actual - no historical data
+plot(all_forecasts$Actual, type = 'l',
+     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+lines( all_forecasts$Forecast, col = 'red')
+legend("topright", legend = c("Actual", "Forecast"),
+       col = c("black", "red"), lty = 1)
+
+
+# Plot combined forecast vs actual - with historical data
+start_index = length(post2013$Volume)+1
+end_index = length(post2013$Volume)+length(all_forecasts$Actual)
+
+plot(post2013$Volume, type = 'l',
+     xlab = "DateTime", ylab = "Volume",
+     main = "Forecasted vs Actual Trading Volume",
+     xlim = range(500:end_index))
+lines(start_index:end_index, all_forecasts$Actual, type = 'l',
+     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual))
+lines(start_index:end_index, all_forecasts$Forecast, col = 'red')
+legend("topright", legend = c("Actual", "Forecast"),
+       col = c("black", "red"), lty = 1)
+
+
+```
+
+```{r}
+# Combine forecasted volumes with pricing data and save into new dataframe
+vwap <- merge(all_forecasts, close_data, by.x= "Actual", by.y = "Volume", all.x= TRUE)
+
+
+# Calculate predicted and actual trade amounts
+vwap <- vwap %>%
+  mutate(PredTradeAmt = Forecast * Adj.Close,
+         ActualTradeAmt = Actual * Adj.Close)
+
+
+# Calculate VWAP for Each Day
+VWAPforecast <- vwap %>%
+  group_by(Date.x) %>%
+  summarize(PredVWAP = sum(PredTradeAmt, na.rm = TRUE) / sum(Forecast, na.rm = TRUE),
+            ActualVWAP = sum(ActualTradeAmt, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+            AvgPrice = mean(Adj.Close, na.rm = TRUE),
+            PriceVol = sd(Adj.Close, na.rm = TRUE))
+
+VWAPforecast <- VWAPforecast %>%
+  mutate(ErrorPct = (PredVWAP - ActualVWAP) / AvgPrice * 100,
+         ErrorBps = ErrorPct*100)
+
+
+# Calculate Naive VWAP estimates
+VWAPforecast$NaiveVWAP1 = lag(VWAPforecast$ActualVWAP) # use yesterday's vwap
+VWAPforecast$NaiveVWAP2 = rollmean(VWAPforecast$ActualVWAP, 3, na.pad = TRUE,
+                                   align = "right") # rolling average
+
+
+VWAPforecast <- VWAPforecast %>%
+  mutate(NaiveErrorPct1 = (NaiveVWAP1 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps1 = NaiveErrorPct1*100,
+         NaiveErrorPct2 = (NaiveVWAP2 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps2 = NaiveVWAP2*100)
+VWAPforecast <- na.omit(VWAPforecast)
+
+# Plot VWAP error percentage on the LHS y-axis and price volatility on RHS y-axis
+plot(VWAPforecast$Date.x,
+     VWAPforecast$ErrorPct,
+     type = 'l', col = 'firebrick1',
+     main = 'VWAP Forecast Error Percentage and Price Volatility',
+     ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2), xlim = )
+lines(VWAPforecast$Date.x, VWAPforecast$NaiveErrorPct1, col = "darkorange")
+lines(VWAPforecast$Date.x, VWAPforecast$NaiveErrorPct2, col = "darkorange3")
+
+abline(h = 0, col = "pink", lty = 2)
+
+par(new = TRUE)
+#plot(VWAPforecast$Date.x,
+#     VWAPforecast$PriceVol,
+#     type = 'l', col = 'darkblue', axes = FALSE, xlab = '', ylab = '',
+#     ylim = range(0, 2.5))
+#axis(side = 4)
+#mtext('Price Volatility', side = 4, line = 3)
+legend("bottomright", legend = c("VWAP Error (%)", "Naive Strategies Error (%)"), col = c("firebrick1", "darkorange"), lty = 1, cex = 0.5)
+
+abline(h = 0, col = "lightblue", lty = 2)
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
