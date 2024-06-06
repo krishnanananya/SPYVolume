@@ -1,0 +1,352 @@
+---
+title: "myproject.207"
+author: "Alma Cooper"
+date: "2024-06-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r }
+library(tidyverse)
+library(lubridate)
+library(forecast)
+library(tseries)
+library(Metrics)
+library(zoo)
+```
+
+```{r}
+library(tidyverse)
+library(astsa)
+library(forecast)
+df <- read.csv("C:/Users/Alma Cooper/Downloads/SPY.csv")
+close_data = df%>% select(Adj.Close, Volume, Date, High, Low)
+#plot(close_data)
+fullhist <- df[c('Date', 'Volume')]
+fullhist$Date <- as.Date(fullhist$Date)
+
+setwd("C:/Users/Alma Cooper/OneDrive - Stanford/Documents")
+getwd()
+frequency_predictions <- readRDS('frequency_predictions.rds')
+#view(frequency_predictions)
+sarimax_predictions <- readRDS('sarimax_predictions.rds')
+#view(sarimax_predictions)
+```
+
+
+
+```{r}
+# Full history
+plot(fullhist, type = 'l', main = 'SPY Daily Trading Volume - Full History')
+grid()
+
+# Last decade
+post2013 <- fullhist[fullhist$Date > "2013-12-31",]
+close_data <- close_data[close_data$Date > "2013-12-31",]
+plot(post2013, type = 'l', main = 'SPY Daily Trading Volume Over the Last Decade')
+grid()
+
+# ACF/PACF plots
+acf(post2013$Volume)
+pacf(post2013$Volume)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+
+
+```{r}
+
+
+ts_data <- ts(post2013$Volume)
+post2013_ts <- ts(post2013$Volume)
+
+#EDA
+#decomp <- decompose(post2013_ts)
+#plot(decomp)
+
+# Fit best SARIMA model
+fit <- auto.arima(post2013_ts, seasonal = TRUE)
+summary(fit)
+
+residuals <- fit$residuals
+plot(residuals)
+checkresiduals(fit)
+
+# Forecast
+forecast_values <- forecast(fit, h=1)
+plot(forecast_values)
+
+```
+
+```{r}
+
+### Predicting Using ARIMA Model
+
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+test_end_date <- as.Date("2024-05-15")
+
+
+# Define dates to loop through in testing
+dates <- post2013$Date[post2013$Date >= test_start_date & post2013$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts <- list()
+actuals <- list()
+
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  train_data <- post2013 %>% filter(post2013$Date< test_date)
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  fit <- arima(ts_train, order = c(3,1,2))
+  summary(fit)
+  
+  # Forecast for the test date
+  forecast_values <- forecast(fit, h = 1)
+  
+  # Extract actual values for the test date
+  actual_values <- post2013 %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+
+```
+
+### Plotting Predictions
+```{r}
+# Combine all forecasts and actuals into one dataframe for plotting
+all_forecasts <- data.frame(Date= as.POSIXct("1900-01-01"),
+                            Forecast = -100000,
+                            Actual = -10000)
+
+for (test_date in dates)
+{
+  forecast_values <- forecasts[[as.character(test_date)]]
+  actual_values <- actuals[[as.character(test_date)]]
+  days <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date))),
+                      by = "day", length.out = 1)
+  
+  temp_df <- data.frame(Date = days,
+                        Forecast = forecast_values$mean,
+                        Actual = actual_values)
+  
+  all_forecasts <- rbind(all_forecasts, temp_df)
+}
+
+all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
+
+# Plot combined forecast vs actual - no historical data
+plot(all_forecasts$Actual, type = 'l',
+     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+lines(all_forecasts$Forecast, col = 'red')
+legend("topright", legend = c("Actual", "Forecast"),
+       col = c("black", "red"), lty = 1)
+
+
+# Plot combined forecast vs actual - with historical data
+start_index = length(post2013$Volume)+1
+end_index = length(post2013$Volume)+length(all_forecasts$Actual)
+
+plot(post2013$Volume, type = 'l',
+     xlab = "DateTime", ylab = "Volume",
+     main = "Forecasted vs Actual Trading Volume",
+     xlim = range(500:end_index))
+lines(start_index:end_index, all_forecasts$Actual, type = 'l',col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual))
+lines(start_index:end_index, all_forecasts$Forecast, col = 'red')
+legend("topright", legend = c("Actual", "Forecast"),
+       col = c("black", "red"), lty = 1)
+
+
+```
+
+
+# VWAP
+```{r}
+# Combine forecasted volumes with pricing data and save into new dataframe
+close_data = close_data%>%filter(Date>="2024-01-08" & Date<= "2024-05-15")
+vwap <- merge(all_forecasts, close_data, by.x="Actual", by.y = "Volume")
+#apr <- as.Date("2024-04-02")
+#may<- as.Date("2024-05-01")
+#subset_vw<-vwap%>%filter(Date >= apr & Date<= may)
+install.packages("dplyr")
+install.packages("lubridate")
+
+library(dplyr)
+library(lubridate)
+# Calculate predicted and actual trade amounts
+vwap <- vwap %>%
+  mutate(PredTradeAmt = Forecast * Adj.Close,
+         ActualTradeAmt = Actual * Adj.Close)
+head(vwap)
+
+vwap= vwap%>%select(Actual, Date.x,Forecast, Adj.Close, High, Low,PredTradeAmt,ActualTradeAmt)
+vwap= vwap%>%mutate(Week = floor_date(Date.x, unit = "week"))
+
+VWAPforecast_sarima <- vwap %>%group_by(Week) %>%
+  summarize(
+    PredVWAP = sum(Forecast * Adj.Close, na.rm = TRUE) / sum(Forecast, na.rm = TRUE),
+    ActualVWAP = sum(Actual * Adj.Close, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+    AvgPrice = mean(Adj.Close, na.rm = TRUE),
+    PriceVol = sd(Adj.Close, na.rm = TRUE)
+  )
+
+VWAPforecast_sarima <- VWAPforecast_sarima %>%
+  mutate(ErrorPct = (PredVWAP - ActualVWAP) / AvgPrice * 100,
+         ErrorBps = ErrorPct*100)
+
+# Calculate Naive VWAP estimates
+VWAPforecast_sarima$NaiveVWAP1 = lag(VWAPforecast_sarima$ActualVWAP) # use yesterday's vwap
+VWAPforecast_sarima$NaiveVWAP2 = rollmean(VWAPforecast_sarima$ActualVWAP, 3, na.pad = TRUE,
+                                   align = "right") # rolling average
+
+
+VWAPforecast_sarima <- VWAPforecast_sarima %>%
+  mutate(NaiveErrorPct1 = (NaiveVWAP1 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps1 = NaiveErrorPct1*100,
+         NaiveErrorPct2 = (NaiveVWAP2 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps2 = NaiveVWAP2*100)
+VWAPforecast_sarima <- VWAPforecast_sarima%>% select(NaiveErrorPct1,NaiveErrorPct2,Week,ErrorPct,ActualVWAP,PredVWAP, AvgPrice, ErrorBps, NaiveVWAP1, NaiveVWAP2, NaiveErrorBps1, NaiveErrorBps2)
+
+# Plot VWAP error percentage on the LHS y-axis and price volatility on RHS y-axis
+plot(VWAPforecast_sarima$Week,
+     VWAPforecast_sarima$ErrorPct,
+     type = 'l', col = 'firebrick1',
+     main = 'VWAP Forecast Error Percentage',
+     ylab = 'Error (%)', xlab = 'Week', ylim = range(-1.5, 1.5))
+lines(VWAPforecast_sarima$Week, VWAPforecast_sarima$NaiveErrorPct1, col = "darkorange")
+lines(VWAPforecast_sarima$Week, VWAPforecast_sarima$NaiveErrorPct2, col = "darkorange3")
+
+abline(h = 0, col = "pink", lty = 2)
+
+#par(new = TRUE)
+#plot(VWAPforecast$Date.x,
+#     VWAPforecast$PriceVol,
+#     type = 'l', col = 'darkblue', axes = FALSE, xlab = '', ylab = '',
+#     ylim = range(0, 2.5))
+#axis(side = 4)
+#mtext('Price Volatility', side = 4, line = 3)
+legend("bottomright", legend = c("VWAP Error (%)", "Naive Strategies Error (%)"), col = c("firebrick1", "darkorange"), lty = 1, cex = 0.5)
+
+abline(h = 0, col = "lightblue", lty = 2)
+
+column_values <- seq(1, 90)
+
+# Create a dataframe with the sequence as a column
+vwap <- vwap%>% mutate(num = column_values)
+
+#all vwap model
+#view(frequency_predictions)
+freq_prdx = unique(frequency_predictions)
+#view(freq_prdx)
+column_values <- seq(1, 89)
+freq_prdx = as.data.frame(freq_prdx)
+freq_prdx = freq_prdx%>%mutate(num = column_values)
+
+#view(sarimax_predictions)
+srmx_prdx = unique(sarimax_predictions)
+#view(srmx_prdx)
+column_values <- seq(1, 89)
+srmx_prdx = as.data.frame(srmx_prdx)
+srmx_prdx = srmx_prdx%>%mutate(num = column_values)
+
+## Merge all VWAP dataframes for all 3 models 
+VWAPall <- merge(freq_prdx, vwap, by = "num")
+VWAPall <-merge(VWAPall, srmx_prdx )
+
+VWAPall <- VWAPall %>%
+  mutate(PredTradeAmt_srmx = srmx_prdx * Adj.Close)
+
+VWAPall = VWAPall%>%select(num,Week,srmx_prdx,freq_prdx,Forecast,Actual,High,Low,Adj.Close,PredTradeAmt,PredTradeAmt_srmx, ActualTradeAmt)
+
+
+# Calculate VWAP for Each WEEK SARIMAX
+VWAPforecast_x <- VWAPall %>%
+  group_by(Week) %>%
+  summarize(
+    PredVWAP_srmx = sum(srmx_prdx * Adj.Close, na.rm = TRUE) / sum(srmx_prdx, na.rm = TRUE),
+    PredVWAP_fdr = sum(freq_prdx * Adj.Close, na.rm = TRUE) / sum(freq_prdx, na.rm = TRUE),
+    ActualVWAP = sum(Actual * Adj.Close, na.rm = TRUE) / sum(Actual, na.rm = TRUE),
+    AvgPrice = mean(Adj.Close, na.rm = TRUE),
+    PriceVol = sd(Adj.Close, na.rm = TRUE)
+  )
+
+VWAPforecast_x <- VWAPforecast_x %>%
+  mutate(ErrorPct_srmx = (PredVWAP_srmx - ActualVWAP) /AvgPrice * 100,
+         ErrorBps_srmx = ErrorPct_srmx*100,
+         ErrorPct_fdr = (PredVWAP_fdr - ActualVWAP) /AvgPrice * 100,
+         ErrorBps_dr = ErrorPct_fdr*100)
+
+
+# Calculate Naive VWAP estimates
+VWAPforecast_x$NaiveVWAP1 = lag(VWAPforecast_x$ActualVWAP) # use yesterday's vwap
+VWAPforecast_x$NaiveVWAP2 = rollmean(VWAPforecast_x$ActualVWAP, 3, na.pad = TRUE,
+                                   align = "right") # rolling average
+
+
+VWAPforecast_x <- VWAPforecast_x %>%
+  mutate(NaiveErrorPct1 = (NaiveVWAP1 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps1 = NaiveErrorPct1*100,
+         NaiveErrorPct2 = (NaiveVWAP2 - ActualVWAP) / AvgPrice * 100,
+         NaiveErrorBps2 = NaiveVWAP2*100)
+#end sarimax
+
+
+#VWAP: FDR
+
+final_vwap = VWAPforecast_sarima%>%select(Week, ErrorPct)
+final_vwap = merge(final_vwap, VWAPforecast_x, by = "Week")
+final_vwap = final_vwap%>%select(Week, ErrorPct, ErrorPct_srmx, ErrorPct_fdr,NaiveErrorPct1,NaiveErrorPct2)
+```
+
+
+
+```{r}
+
+# Plot VWAP error percentage for each model
+plot(final_vwap$Week,
+     final_vwap$ErrorPct,
+     type = 'l', col = 'firebrick1',
+     main = 'VWAP Forecast Error Percentage',
+     ylab = 'Error (%)', xlab = 'Date', ylim = range(-1.5, 0.2))
+lines(final_vwap$Week, final_vwap$ErrorPct_srmx, col = "firebrick4")
+lines(final_vwap$Week, final_vwap$ErrorPct_fdr, col = "orange3")
+
+lines(final_vwap$Week, final_vwap$NaiveErrorPct1, col = "blue4")
+lines(final_vwap$Week, final_vwap$NaiveErrorPct2, col = "blue1")
+legend("bottomright", legend = c("SARIMA", "SARIMAX", "Frequency Domain", "Naive Strategies"), col = c("firebrick1", "firebrick4", "orange3", "blue"), lty = 1, cex = 0.5)
+
+abline(h = 0, col = "pink", lty = 2)
+```
