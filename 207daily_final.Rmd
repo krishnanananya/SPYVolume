@@ -24,14 +24,12 @@ library(zoo)
 library(tidyverse)
 library(astsa)
 library(forecast)
-df <- read.csv("C:/Users/Alma Cooper/Downloads/SPY.csv")
+setwd('~/Documents/Stanford/STATS207/SPYVolume')
+df <- read.csv("SPY.csv")
 close_data = df%>% select(Adj.Close, Volume, Date, High, Low)
 #plot(close_data)
 fullhist <- df[c('Date', 'Volume')]
 fullhist$Date <- as.Date(fullhist$Date)
-
-setwd("C:/Users/Alma Cooper/OneDrive - Stanford/Documents")
-getwd()
 frequency_predictions <- readRDS('frequency_predictions.rds')
 #view(frequency_predictions)
 sarimax_predictions <- readRDS('sarimax_predictions.rds')
@@ -56,12 +54,6 @@ acf(post2013$Volume)
 pacf(post2013$Volume)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-
-
 ```{r}
 
 
@@ -83,6 +75,67 @@ checkresiduals(fit)
 # Forecast
 forecast_values <- forecast(fit, h=1)
 plot(forecast_values)
+
+```
+
+# Best model at each timestep with auto.arima
+```{r}
+
+### Predicting Using ARIMA Model
+
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+test_end_date <- as.Date("2024-05-15")
+
+
+# Define dates to loop through in testing
+dates <- post2013$Date[post2013$Date >= test_start_date & post2013$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts_arima <- list()
+actuals <- list()
+
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  train_data <- post2013 %>% filter(post2013$Date< test_date)
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  #fit <- arima(ts_train, order = c(2,1,2))
+  fit <- auto.arima(ts_train, seasonal = TRUE)
+  #checkresiduals(fit)
+  
+  # Forecast for the test date
+  forecast_values <- forecast(fit, h = 1)
+  
+  # Extract actual values for the test date
+  actual_values <- post2013 %>%
+    filter(Date == test_date) %>%
+    select(Volume) %>%
+    unlist()
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values$mean)
+  mape_value <- mape(actual_values, forecast_values$mean)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts_arima[[as.character(as.Date(test_date))]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
 
 ```
 
@@ -115,7 +168,7 @@ for (test_date in dates) {
   
   # Fit ARIMA model on training data
   fit <- arima(ts_train, order = c(3,1,2))
-  summary(fit)
+  #checkresiduals(fit)
   
   # Forecast for the test date
   forecast_values <- forecast(fit, h = 1)
@@ -149,31 +202,48 @@ cat("Average MAPE:", avg_mape, "\n")
 ```{r}
 # Combine all forecasts and actuals into one dataframe for plotting
 all_forecasts <- data.frame(Date= as.POSIXct("1900-01-01"),
-                            Forecast = -100000,
+                            Forecast_arima = -100000,
+                            Forecast_arimax = -10000,
+                            Forecast_freq = -100000,
                             Actual = -10000)
-
-for (test_date in dates)
+index = 1
+for (test_date in head(dates, -1))
 {
-  forecast_values <- forecasts[[as.character(test_date)]]
+  forecast_arima_values <- forecasts[[index+1]]
+  forecast_arimax_values <- sarimax_predictions[index]
+  forecast_freq_values <- frequency_predictions[index]
   actual_values <- actuals[[as.character(test_date)]]
   days <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date))),
                       by = "day", length.out = 1)
   
   temp_df <- data.frame(Date = days,
-                        Forecast = forecast_values$mean,
+                        Forecast_arima = forecast_arima_values$mean,
+                        Forecast_arimax = forecast_arimax_values,
+                        Forecast_freq = forecast_freq_values,
                         Actual = actual_values)
   
   all_forecasts <- rbind(all_forecasts, temp_df)
+  
+  index = index + 1
 }
 
 all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
 
 # Plot combined forecast vs actual - no historical data
 plot(all_forecasts$Actual, type = 'l',
-     col = 'black', ylim = range(all_forecasts$Forecast, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
-lines(all_forecasts$Forecast, col = 'red')
-legend("topright", legend = c("Actual", "Forecast"),
-       col = c("black", "red"), lty = 1)
+     col = 'black', lwd=2, ylim = range(all_forecasts$Forecast_arima, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+lines(all_forecasts$Forecast_arima, col = 'red', lwd=2)
+lines(all_forecasts$Forecast_arimax, col = 'blue', lwd=2)
+legend("topright", legend = c("Actual", "Forecast ARIMA", "Forecast SARIMAX"),
+       col = c("black", "red", "blue"), lwd=c(2, 2, 2), lty = 1)
+
+# Plot combined forecast vs actual - no historical data
+plot(all_forecasts$Actual, type = 'l',
+     col = 'black', lwd=2, ylim = range(all_forecasts$Forecast_arima, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+lines(all_forecasts$Forecast_arima, col = 'red', lwd=2)
+lines(all_forecasts$Forecast_freq, col = 'orange', lwd=2)
+legend("topright", legend = c("Actual", "Forecast ARIMA", "Forecast Frequency"),
+       col = c("black", "red", "orange"), lwd=c(2, 2, 2), lty = 1)
 
 
 # Plot combined forecast vs actual - with historical data

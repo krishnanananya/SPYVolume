@@ -126,7 +126,7 @@ pacf(trading_hours$Volume, main = "Partial ACF Plot - Intraday Volume")
 ts_data <- ts(trading_hours$Volume, frequency = 8)
 
 # Decompose Time Series
-decomp <- decompose(ts_data)
+decomp <- decompose(ts_data,  main="Decomposition of Intraday time series")
 plot(decomp)
 
 ```
@@ -186,7 +186,7 @@ for (test_date in dates) {
   # Fit ARIMA model on training data
   fit <- arima(ts_train, order = c(1, 0, 2), seasonal = c(0, 1, 2))
   summary(fit)
-  checkresiduals(fit)
+  #checkresiduals(fit)
   
   # Forecast for the test date (8 trading hours)
   forecast_values <- forecast(fit, h = 8)
@@ -244,7 +244,7 @@ for (test_date in dates) {
   # Fit ARIMA model on training data
   fit <- arima(ts_train, order = c(1, 0, 3), seasonal = c(0, 1, 2))
   summary(fit)
-  checkresiduals(fit)
+  #checkresiduals(fit)
   
   # Forecast for the test date (8 trading hours)
   forecast_values <- forecast(fit, h = 8)

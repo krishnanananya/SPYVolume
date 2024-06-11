@@ -53,7 +53,7 @@ plotfourier(ts_data)
 
 ## Plot Periodogram
 ```{r}
-plot(1:360, abs(fft(ts_data)[2:361])^2 / length(ts_data), type = "h", xlab="index i", ylab = "Periodogram", main="Periodogram for full data")
+plot(1:360, abs(fft(ts_data)[2:361])^2 / length(ts_data), type = "h", xlab="index i", ylab = "Periodogram", main="Periodogram for full Intraday data")
 abline(h=0)
 #abline(h=1e+14)
 ```
@@ -174,7 +174,7 @@ forecasts_freq = freq_cv(trading_hours, 3)
 ```
 
 ```{r}
-for (m in 1:200) {
+for (m in c(2,3,5,10,25,100)) {
   print(m)
   freq_cv(trading_hours, m)
   print("************************************************************")
@@ -311,7 +311,7 @@ for (test_date in dates) {
   
   # Fit ARIMA model on training data
   fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
-  checkresiduals(fit)
+  #checkresiduals(fit)
 
   # Forecast for the test date (8 trading hours)
   test_covariates <- covariate_data[trading_hours$Date == test_date,]
@@ -350,19 +350,24 @@ cat("Average MAPE:", avg_mape, "\n")
 ```{r}
 # Combine all forecasts and actuals into one dataframe for plotting
 all_forecasts <- data.frame(DateTime = as.POSIXct("1900-01-01 09:00:00"),
+                            Forecast_arima = -100000,
                             Forecast_arimax = -100000,
+                            #Forecast_freq = -100000,
                             Actual = -10000)
 
 for (test_date in dates)
 {
-  # forecast_arima_values <- forecasts_arima[[as.character(test_date)]]
+  forecast_arima_values <- forecasts_arima[[as.character(test_date)]]
   forecast_arimax_values <- forecasts_arimax[[as.character(test_date)]]
+  #forecast_freq_values <- forecasts_freq[[as.character(test_date)]]
   actual_values <- actuals[[as.character(test_date)]]
   hours <- seq.POSIXt(from = as.POSIXct(paste(as.Date(test_date), "09:00:00")),
                       by = "hour", length.out = 8)
   
   temp_df <- data.frame(DateTime = hours,
+                        Forecast_arima = forecast_arima_values$mean,
                         Forecast_arimax = forecast_arimax_values$mean,
+                        #Forecast_freq = forecast_freq_values$predicted,
                         Actual = actual_values)
   
   all_forecasts <- rbind(all_forecasts, temp_df)
@@ -374,15 +379,15 @@ all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
 # Plot combined forecast vs actual - no historical data
 plot(all_forecasts$Actual, type = 'l',
      col = alpha('black', 1), lwd=2, ylim = range(all_forecasts$Forecast_arimax, all_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
-#lines( all_forecasts$Forecast_arima, col = alpha('red', 0.8))
-lines( all_forecasts$Forecast_arimax, col = alpha('blue', 0.8))
-#lines( all_forecasts$Forecast_freq, col = alpha('orange', 0.8))
-legend("topright", legend = c("Actual", "Forecast ARIMAX", "Forecast Frequency Domain"),
+lines( all_forecasts$Forecast_arima, col = alpha('red', 0.8), lwd=1)
+lines( all_forecasts$Forecast_arimax, col = alpha('blue', 0.8), lwd=1)
+#lines( all_forecasts$Forecast_freq, col = alpha('orange', 0.8), lwd=1)
+legend("topright", legend = c("Actual", "Forecast SARIMA", "Forecast SARIMAX"),
        col = c(alpha("black", 1), 
-               #alpha("red", 0.8), 
-               alpha("blue", 0.8), 
-               alpha("orange", 0.8)), 
-       lwd=c(2, 1, 1, 1), lty = 1)
+               alpha("red", 0.8), 
+               alpha("blue", 0.8)), 
+               #alpha("orange", 0.8)), 
+       lwd=c(2, 2, 2), lty = 1)
 
 # Plot combined forecast vs actual - with historical data
 start_index = length(trading_hours$Volume)+1

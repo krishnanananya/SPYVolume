@@ -1,0 +1,472 @@
+---
+title: "Daily non-ARIMA"
+author: "Martin Pollack"
+date: "2024-06-04"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+df <- read.csv('SPY.csv')
+
+start_date = "2023-01-08"
+end_date = "2024-05-16"
+df = df[df$Date >= start_date,]
+df = df[df$Date <= end_date,]
+```
+
+# Frequency Domain Representation
+## Helper Functions
+```{r}
+ftrans <- function(x){
+  N <- length(x)
+  a <- fft(x)
+  freq <- (0:(N/2))/N
+  a <- a[ 1:length(freq)]
+  list( freq= freq, ampl = abs( a), phase=Arg(a))
+}
+
+plotfourier <- function( x){
+  x <- ftrans(x)
+  plot( x$freq, x$ampl, type="h", xlab=" Frequency", ylab="Amplitude")
+}
+```
+## Plot Periodogram
+```{r}
+ts_data_daily = ts(df$Volume, frequency = 1)
+plot(2:170, abs(fft(ts_data_daily)[2:170])^2 / length(ts_data_daily), type = "h", xlab="index i", ylab = "Periodogram", main="Periodogram for full Daily data")
+abline(h=0)
+#abline(h=1e+14)
+```
+
+```{r}
+freq_fit <- function(ts_train, test_data, m) {
+  n = length(ts_train)
+  
+  high_freq_indices_m = order(abs(fft(ts_train)[2:(n/2 + 1)])^2 / n, decreasing=TRUE)[1:m]
+  
+  f = high_freq_indices_m / n
+  
+  input_data = data.frame(y = ts_train)
+  tme_train = 0:(n-1)
+  for (j in 1:m) {
+    input_data[,paste0("cos", as.character(j))] = cos(2*pi*f[j]*tme_train)
+    
+    input_data[,paste0("sin", as.character(j))] = sin(2*pi*f[j]*tme_train)
+  }
+
+  reg = lm(y ~ ., data=input_data)
+  
+  prediction_data = data.frame(intercept=1)
+  tme_test = n
+  for (j in 1:m) {
+    prediction_data[,paste0("cos", as.character(j))] = cos(2*pi*f[j]*tme_test)
+    
+    prediction_data[,paste0("sin", as.character(j))] = sin(2*pi*f[j]*tme_test)
+  }
+  
+  predicted_data = predict(reg, newdata=prediction_data)
+  
+  mse_freq = mse(test_data, predicted_data)
+  
+  predicted_data_nonzero = predicted_data
+  predicted_data_nonzero[predicted_data_nonzero < 0] = 0
+  mse_freq_nonzero = mse(test_data, predicted_data_nonzero)
+  
+  mape_freq = mape(test_data, predicted_data)
+  
+  mape_freq_nonzero = mape(test_data, predicted_data_nonzero)
+  
+  return(list(mse_freq=mse_freq, 
+           mse_freq_nonzero=mse_freq_nonzero,
+           mape_freq=mape_freq, 
+           mape_freq_nonzero=mape_freq_nonzero,
+           predicted=predicted_data))
+}
+```
+
+```{r}
+freq_cv <- function(data, m) {
+  
+  # Define training and test periods
+  train_start_date <- as.Date("2023-01-08")
+  test_start_date <- as.Date("2024-01-08")
+  test_end_date <- as.Date("2024-05-15")
+
+  # Define dates to loop through in testing
+  dates <- data$Date[data$Date >= test_start_date & data$Date <= test_end_date]
+  dates <- dates[!duplicated(dates)]
+
+  mse_list <- list()
+  mse_nonzero_list <- list()
+  
+  mape_list <- list()
+  mape_nonzero_list <- list()
+  
+  forecasts_freq <- list()
+  
+  for (test_date in dates) {
+    # Define training data
+    train_data <- data %>% filter(Date < test_date)
+    ts_train <- ts(train_data$Volume, frequency=1)
+    
+    # Extract actual values for the test date
+    test_data <- data %>%
+      filter(Date == test_date) %>%
+      select(Volume) %>%
+      unlist()
+    
+    fit_results = freq_fit(ts_train, test_data, m)
+
+    # Store results in list
+    mse_list[[as.character(test_date)]] <- fit_results["mse_freq"]
+    mse_nonzero_list[[as.character(test_date)]] <- fit_results["mse_freq_nonzero"]
+    
+    mape_list[[as.character(test_date)]] <- fit_results["mape_freq"]
+    mape_nonzero_list[[as.character(test_date)]] <- fit_results["mape_freq_nonzero"]
+    
+    forecasts_freq[[as.character(test_date)]] <- fit_results["predicted"]
+  }
+  
+  # Calculate average MSE and MAPE across all predictions
+  avg_mse <- mean(unlist(mse_list))
+  avg_mse_nonzero <- mean(unlist(mse_nonzero_list))
+  
+  avg_mape <- mean(unlist(mape_list))
+  avg_mape_nonzero <- mean(unlist(mape_nonzero_list))
+
+  cat("Average MSE (m=", m, "):", avg_mse, "\n")
+  cat("Average MSE Nonzero (m=", m, "):", avg_mse_nonzero, "\n")
+  
+  cat("Average MAPE (m=", m, "):", avg_mape, "\n")
+  cat("Average MAPE Nonzero (m=", m, "):", avg_mape_nonzero, "\n")
+  
+  return(forecasts_freq)
+}
+```
+
+```{r}
+forecasts_freq = freq_cv(df, 40)
+```
+
+```{r}
+for (m in c(2, 3, 5, 10, 25, 40, 50, 100)) {
+  print(m)
+  freq_cv(df, m)
+  print("************************************************************")
+}
+# m=2 seems to be best
+# Overfitting happens very quickly. For larger m, taking nonzero predictions makes bigger difference.
+```
+
+
+# SARIMAX
+```{r}
+library(TTR)
+```
+```{r}
+spy = read.csv('SPY.csv')
+start_date = "2022-12-16"
+end_date = "2024-05-16"
+spy = spy[spy$Date >= start_date,]
+spy = spy[spy$Date <= end_date,]
+
+nrow(spy[spy$Date < "2023-01-08",])
+```
+
+```{r}
+adx = function(n) ADX(spy[,c("High", "Low", "Close")], n=n)[-(1:14),4]
+
+dema = function(n) DEMA(spy$Close, n=n)[-(1:14)]
+
+ema = function(n) EMA(spy$Close, n=n)[-(1:14)]
+
+mom = function(n) momentum(spy$Close, n=n)[-(1:14)]
+
+roc = function(n) ROC(spy$Close, n=n)[-(1:14)]
+
+rsi = function(n) RSI(spy$Close, n=n)[-(1:14)]
+
+sma = function(n) SMA(spy$Close, n=n)[-(1:14)]
+
+wpr = function(n) WPR(spy[,c("High", "Low", "Close")], n=n)[-(1:14)]
+
+fastK = function(n) stoch(spy[,c("High", "Low", "Close")], nFastK=n, nFastD=n)[-(1:14),1]
+fastD = function(n) stoch(spy[,c("High", "Low", "Close")], nFastK=n, nFastD=n)[-(1:14),2]
+
+df = spy[-c(1:14),]
+```
+
+# MOM
+```{r}
+covariate_data = cbind(
+                        # adx(6)
+                        # dema(4)
+                        # ema(5)
+                        mom(5)
+                        # roc(3)
+                        # rsi(1)
+                        # sma(5)
+                        # wpr(6)
+                        # fastK(6)
+                        # fastD(5)
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+test_end_date <- as.Date("2024-05-14")
+
+# Define dates to loop through in testing
+dates <- df$Date[df$Date >= test_start_date & df$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts_arimax <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(df$Date < test_date)
+  train_data <- df[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = FALSE, xreg=train_covariates)
+  #checkresiduals(fit)
+
+  # Forecast for the test range (1 trading day)
+  test_date_index <- which(df$Date == test_date)
+  test_covariates <- covariate_data[df$Date == test_date,]
+
+  forecast_values <- forecast(fit, h = 1, xreg=test_covariates)
+  forecast_values <- forecast_values$mean[1]
+  
+  # Extract actual values for the test date
+  actual_values <- df$Volume[test_date_index]
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values)
+  mape_value <- mape(actual_values, forecast_values)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts_arimax[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+
+## MOM, RSI
+```{r}
+covariate_data = cbind(
+                        # adx(5),
+                        # dema(5),
+                        # ema(5),
+                        mom(3),
+                        # roc,
+                        rsi(1)
+                        # sma(3)
+                        # wpr(3)
+                        # fastK,
+                        # fastD
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+test_end_date <- as.Date("2024-05-14")
+
+# Define dates to loop through in testing
+dates <- df$Date[df$Date >= test_start_date & df$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts_arimax <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(df$Date < test_date)
+  train_data <- df[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+  #checkresiduals(fit)
+
+  # Forecast for the test range (1 trading day)
+  test_date_index <- which(df$Date == test_date)
+  test_covariates <- covariate_data[df$Date == test_date, , drop=FALSE]
+
+  forecast_values <- forecast(fit, h = 1, xreg=test_covariates)
+  forecast_values <- forecast_values$mean[1]
+  
+  # Extract actual values for the test date
+  actual_values <- df$Volume[test_date_index]
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values)
+  mape_value <- mape(actual_values, forecast_values)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts_arimax[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+
+## MOM, RSI, ADX
+```{r}
+covariate_data = cbind(
+                        adx(4),
+                        # dema(4),
+                        # ema(5),
+                        mom(3),
+                        # roc,
+                        rsi(1)
+                        # sma(5)
+                        # wpr(2)
+                        # fastK(1)
+                        # fastD(4)
+                        )
+# Define training and test periods
+train_start_date <- as.Date("2023-01-08")
+test_start_date <- as.Date("2024-01-08")
+test_end_date <- as.Date("2024-05-14")
+
+# Define dates to loop through in testing
+dates <- df$Date[df$Date >= test_start_date & df$Date <= test_end_date]
+dates <- dates[!duplicated(dates)]
+
+# Initialize lists to store results
+mse_list <- list()
+mape_list <- list()
+forecasts_arimax <- list()
+actuals <- list()
+
+# Loop through each test date
+for (test_date in dates) {
+  # Define training data
+  filter_indices <- which(df$Date < test_date)
+  train_data <- df[filter_indices,]
+  train_covariates <- covariate_data[filter_indices,]
+  
+  ts_train <- ts(train_data$Volume, frequency = 1)
+  
+  # Fit ARIMA model on training data
+  fit <- auto.arima(ts_train, seasonal = TRUE, xreg=train_covariates)
+  #checkresiduals(fit)
+
+  # Forecast for the test range (1 trading day)
+  test_date_index <- which(df$Date == test_date)
+  test_covariates <- covariate_data[df$Date == test_date, , drop=FALSE]
+
+  forecast_values <- forecast(fit, h = 1, xreg=test_covariates)
+  forecast_values <- forecast_values$mean[1]
+  
+  # Extract actual values for the test date
+  actual_values <- df$Volume[test_date_index]
+  
+  # Calculate MSE and MAPE
+  mse_value <- mse(actual_values, forecast_values)
+  mape_value <- mape(actual_values, forecast_values)
+  
+  # Store results in list
+  mse_list[[as.character(test_date)]] <- mse_value
+  mape_list[[as.character(test_date)]] <- mape_value
+  forecasts_arimax[[as.character(test_date)]] <- forecast_values
+  actuals[[as.character(test_date)]] <- actual_values
+
+}
+
+# Calculate average MSE and MAPE across all predictions
+avg_mse <- mean(unlist(mse_list))
+avg_mape <- mean(unlist(mape_list))
+
+cat("Average MSE:", avg_mse, "\n")
+cat("Average MAPE:", avg_mape, "\n")
+```
+
+
+
+# Plots
+```{r}
+# Combine all forecasts and actuals into one dataframe for plotting
+all_forecasts <- data.frame(Date = as.POSIXct("1900-01-01 09:00:00"),
+                            Forecast_arima = -100000,
+                            Forecast_arimax = -100000,
+                            Forecast_freq = -100000,
+                            Actual = -10000)
+
+for (test_date in dates)
+{
+  forecast_arima_values <- forecasts_arima[[test_date]]
+  forecast_arimax_values <- forecasts_arimax[[as.character(test_date)]]
+  forecast_freq_values <- forecasts_freq[[as.character(test_date)]]$predicted
+  actual_values <- actuals[[as.character(test_date)]]
+  days <- seq.POSIXt(from = as.POSIXct(as.Date(test_date)),
+                      by = "day", length.out = 1)
+  
+  temp_df <- data.frame(Date = days,
+                        Forecast_arima = forecast_arima_values$mean,
+                        Forecast_arimax = forecast_arimax_values,
+                        Forecast_freq = forecast_freq_values,
+                        Actual = actual_values)
+  
+  all_forecasts <- rbind(all_forecasts, temp_df)
+}
+
+all_forecasts = all_forecasts[-1,] # Remove arbitrary first entry
+
+final_forecasts = data.frame(blank = rep(-999999, 88))
+final_forecasts$Actual = all_forecasts$Actual[-89]
+final_forecasts$Forecast_arima = all_forecasts$Forecast_arima[-1]
+final_forecasts$Forecast_arimax = all_forecasts$Forecast_arimax[-1]
+final_forecasts$Forecast_freq = all_forecasts$Forecast_freq[-1]
+
+
+# Plot combined forecast vs actual - no historical data
+plot(final_forecasts$Actual, type = 'l',
+     col = alpha('black', 1), lwd=2, ylim = range(final_forecasts$Forecast_arimax, final_forecasts$Actual), xlab = "DateTime", ylab = "Volume", main = "Forecasted vs Actual Trading Volume")
+#lines( final_forecasts$Forecast_arima, col = alpha('red', 0.8), lwd=2)
+lines( final_forecasts$Forecast_arimax, col = alpha('blue', 0.8), lwd=2)
+lines( final_forecasts$Forecast_freq, col = alpha('orange', 0.8), lwd=2)
+legend("topright", legend = c("Actual", "Forecast ARIMAX", "Forecast Frequency Domain"),
+       col = c(alpha("black", 1), 
+               #alpha("red", 0.8), 
+               alpha("blue", 0.8), 
+               alpha("orange", 0.8)), 
+       lwd=c(2, 2, 2, 2), lty = 1)
+```
+
